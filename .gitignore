@@ -1,0 +1,33 @@
+# Credentials and local database state
+.env
+.env.*
+!.env.example
+/data/
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.pem
+*.key
+
+# Python environments and generated files
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Local tooling and operating system files
+.DS_Store
+.idea/
+.vscode/
+.codex/
+.agents/
+*.log
+node_modules/
+
+# The supplied frontend/dist is intentionally included in this release.
