@@ -1,0 +1,35 @@
+[
+  {
+    "name": "recorded_member_count_star_many_to_one",
+    "trace_id": "465008e3-d2ee-409d-966b-2c8cef9891c9",
+    "question": "普通、银卡、金卡和白金用户，各自最喜欢哪三类电影？按实际购票人数来看，同时看看订单量和扣掉退款后的收入，全额退款的订单不算。",
+    "observed_values": {
+      "customers.membership_level": [
+        "gold",
+        "normal",
+        "platinum",
+        "silver"
+      ],
+      "ticket_orders.order_status": [
+        "completed",
+        "paid",
+        "partial_refund",
+        "refunded"
+      ]
+    },
+    "candidates": [
+      {
+        "sql": "WITH \"ranked_by_level\" AS (SELECT \"c\".membership_level, \"m\".genre, COUNT(DISTINCT \"t\".customer_id) AS purchasing_customers, COUNT(*) AS order_count, SUM(\"t\".total_amount - \"t\".refund_amount) AS net_revenue, ROW_NUMBER() OVER (PARTITION BY \"c\".membership_level ORDER BY COUNT(DISTINCT \"t\".customer_id) DESC, \"m\".genre ASC) AS rn FROM ticket_orders AS \"t\" JOIN customers AS \"c\" ON \"t\".customer_id = \"c\".customer_id JOIN screenings AS \"s\" ON \"t\".screening_id = \"s\".screening_id JOIN movies AS \"m\" ON \"s\".movie_id = \"m\".movie_id WHERE \"c\".membership_level IN ('normal', 'silver', 'gold', 'platinum') AND \"t\".order_status <> 'refunded' GROUP BY \"c\".membership_level, \"m\".genre) SELECT membership_level, genre, purchasing_customers, order_count, net_revenue FROM \"ranked_by_level\" WHERE rn <= 3 ORDER BY membership_level, rn LIMIT 200",
+        "expect_business_accept": true
+      },
+      {
+        "sql": "WITH \"ranked_by_level\" AS (SELECT \"c\".membership_level, \"m\".genre, COUNT(DISTINCT \"t\".customer_id) AS purchasing_customers, COUNT(*) AS order_count, SUM(\"t\".total_amount - \"t\".refund_amount) AS net_revenue, ROW_NUMBER() OVER (PARTITION BY \"c\".membership_level ORDER BY COUNT(DISTINCT \"t\".customer_id) DESC, \"m\".genre ASC) AS rn FROM ticket_orders AS \"t\" JOIN customers AS \"c\" ON \"t\".customer_id = \"c\".customer_id JOIN screenings AS \"s\" ON \"t\".screening_id = \"s\".screening_id JOIN movies AS \"m\" ON \"s\".movie_id = \"m\".movie_id WHERE \"c\".membership_level IN ('normal', 'silver', 'gold', 'platinum') AND \"t\".order_status <> 'refunded' GROUP BY \"c\".membership_level, \"m\".genre) SELECT membership_level, genre, purchasing_customers, order_count, net_revenue FROM \"ranked_by_level\" WHERE rn <= 3 ORDER BY membership_level, rn LIMIT 200",
+        "expect_business_accept": true
+      },
+      {
+        "sql": "WITH \"ranked_by_level\" AS (SELECT \"c\".membership_level, \"m\".genre, COUNT(DISTINCT \"t\".customer_id) AS purchasing_customers, COUNT(*) AS order_count, SUM(\"t\".total_amount - \"t\".refund_amount) AS net_revenue, ROW_NUMBER() OVER (PARTITION BY \"c\".membership_level ORDER BY COUNT(DISTINCT \"t\".customer_id) DESC, \"m\".genre ASC) AS rn FROM ticket_orders AS \"t\" JOIN customers AS \"c\" ON \"t\".customer_id = \"c\".customer_id JOIN screenings AS \"s\" ON \"t\".screening_id = \"s\".screening_id JOIN movies AS \"m\" ON \"s\".movie_id = \"m\".movie_id WHERE \"c\".membership_level IN ('normal', 'silver', 'gold', 'platinum') AND \"t\".order_status <> 'refunded' GROUP BY \"c\".membership_level, \"m\".genre) SELECT membership_level, genre, purchasing_customers, order_count, net_revenue FROM \"ranked_by_level\" WHERE rn <= 3 ORDER BY membership_level, rn LIMIT 200",
+        "expect_business_accept": true
+      }
+    ]
+  }
+]

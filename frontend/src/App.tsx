@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import ReactECharts from 'echarts-for-react';
+import { buildChartOption } from './chart';
+import { ConversationListItem } from './components/ConversationListItem';
 
 type Message = {
   role: 'user' | 'assistant';
@@ -16,6 +18,8 @@ type Message = {
     top_k?: number;
     score_threshold?: number;
   };
+  chartConfig?: unknown;
+  chartError?: string;
   echartsCode?: string;
   error?: string;
   errorCode?: number;
@@ -186,6 +190,8 @@ function App() {
   });
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const conversationListRef = useRef<HTMLDivElement>(null);
+  const pendingConversationFocusRef = useRef(false);
   const activeConversation = conversations.find((item) => item.id === activeConversationId) || null;
   const messages = activeConversation?.messages || [];
   const selectedSemanticTableDetail =
@@ -206,6 +212,15 @@ function App() {
   useEffect(() => {
     localStorage.setItem(CONVERSATIONS_STORAGE_KEY, JSON.stringify(conversations));
   }, [conversations]);
+
+  useEffect(() => {
+    if (!pendingConversationFocusRef.current) return;
+    const buttons = conversationListRef.current?.querySelectorAll<HTMLButtonElement>('button[data-conversation-select]');
+    const target = Array.from(buttons || []).find((button) => button.getAttribute('data-conversation-select') === activeConversationId);
+    if (!target) return;
+    target.focus();
+    pendingConversationFocusRef.current = false;
+  }, [conversations, activeConversationId]);
 
   useEffect(() => {
     if (activeConversationId) {
@@ -245,6 +260,21 @@ function App() {
     setConversations((prev) => [newConversation, ...prev]);
     setActiveConversationId(newConversation.id);
     setInput('');
+  };
+
+  const deleteConversation = (conversationId: string) => {
+    if (!conversations.some((item) => item.id === conversationId)) return;
+    // Create once in the event, then derive removal from the latest queued state.
+    const fallback = createDefaultConversation();
+    pendingConversationFocusRef.current = true;
+    setConversations((prev) => {
+      const remaining = prev.filter((item) => item.id !== conversationId);
+      return remaining.length ? remaining : [fallback];
+    });
+    if (activeConversationId === conversationId) {
+      setInput('');
+    }
+    // The existing activation effect selects the first remaining/new conversation.
   };
 
   const normalizeBaseUrl = () => {
@@ -501,36 +531,6 @@ function App() {
     }
   };
 
-  const parseEchartsOption = (echartsCode: string, rows: any[][] = [], columns: string[] = []) => {
-    if (!echartsCode) return null;
-
-    const hybridRows = (rows || []).map((row) => {
-      if (Array.isArray(row)) {
-        const arr = [...row] as any[];
-        columns.forEach((col, idx) => {
-          (arr as any)[col] = row[idx];
-        });
-        return arr;
-      }
-      const obj = row as Record<string, any>;
-      const arr = columns.map((col) => obj?.[col]) as any[];
-      columns.forEach((col, idx) => {
-        (arr as any)[col] = arr[idx];
-      });
-      return arr;
-    });
-
-    try {
-      return JSON.parse(echartsCode);
-    } catch {
-      try {
-        return new Function('rows', 'columns', `return (${echartsCode});`)(hybridRows, columns);
-      } catch {
-        return null;
-      }
-    }
-  };
-
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -682,7 +682,8 @@ function App() {
             columns: data.data.columns,
             explanation: data.data.explanation,
             retrieval: data.data.retrieval,
-            echartsCode: data.data.echarts_code,
+            chartConfig: data.data.chart_config,
+            chartError: data.data.chart_error,
             isLoading: false
           };
         } else {
@@ -1131,21 +1132,16 @@ function App() {
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+        <div ref={conversationListRef} className="flex-1 overflow-y-auto p-4 space-y-2">
           {conversations.map((conversation) => (
-            <button
+            <ConversationListItem
               key={conversation.id}
-              type="button"
-              onClick={() => setActiveConversationId(conversation.id)}
-              className={`w-full text-left p-2 text-sm rounded-md truncate transition ${
-                conversation.id === activeConversationId
-                  ? 'bg-gray-300 text-gray-900'
-                  : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
-              }`}
+              id={conversation.id}
               title={conversation.title}
-            >
-              {conversation.title}
-            </button>
+              active={conversation.id === activeConversationId}
+              onSelect={() => setActiveConversationId(conversation.id)}
+              onDelete={() => deleteConversation(conversation.id)}
+            />
           ))}
         </div>
         <div className="p-4 border-t">
@@ -1276,14 +1272,35 @@ function App() {
                           </div>
                         )}
 
-                        {msg.echartsCode && (
+                        {(msg.chartConfig != null || msg.chartError || msg.echartsCode) && (
                           <div className="mt-4 border rounded-lg p-3 bg-white">
                             {(() => {
-                              const option = parseEchartsOption(msg.echartsCode, msg.rows, msg.columns);
+                              if (msg.chartError) {
+                                return (
+                                  <div role="status" className="text-xs text-gray-600">
+                                    图表未生成：{msg.chartError}
+                                  </div>
+                                );
+                              }
+                              if (msg.chartConfig == null) {
+                                return (
+                                  <div role="status" className="text-xs text-gray-600">
+                                    此历史图表使用旧版配置，已停止加载。重新查询可生成图表。
+                                  </div>
+                                );
+                              }
+                              if (!msg.rows?.length) {
+                                return (
+                                  <div role="status" className="text-xs text-gray-600">
+                                    没有可展示的图表数据。
+                                  </div>
+                                );
+                              }
+                              const option = buildChartOption(msg.chartConfig, msg.rows, msg.columns);
                               if (!option) {
                                 return (
-                                  <div className="text-xs text-red-500">
-                                    图表配置解析失败，请检查后端返回的 `echarts_code` 格式。
+                                  <div role="status" className="text-xs text-red-500">
+                                    图表配置无效，查询结果已保留。请重新查询。
                                   </div>
                                 );
                               }

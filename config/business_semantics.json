@@ -1,0 +1,793 @@
+{
+  "version": 1,
+  "profiles": [
+    {
+      "id": "cinema_operations",
+      "description": "影院经营演示数据的业务名称与指标口径；金额指标按订单粒度计算。",
+      "required_columns": {
+        "cities": [
+          "city_id",
+          "city_name"
+        ],
+        "cinemas": [
+          "cinema_id",
+          "city_id",
+          "cinema_name"
+        ],
+        "movies": [
+          "movie_id",
+          "title",
+          "genre"
+        ],
+        "screenings": [
+          "screening_id",
+          "cinema_id",
+          "movie_id",
+          "screen_type"
+        ],
+        "customers": [
+          "customer_id",
+          "membership_level"
+        ],
+        "ticket_orders": [
+          "order_id",
+          "customer_id",
+          "screening_id",
+          "sales_channel"
+        ],
+        "order_items": [
+          "item_id",
+          "order_id"
+        ],
+        "movie_reviews": [
+          "review_id",
+          "movie_id"
+        ]
+      },
+      "unsupported_terms": [
+        "利润",
+        "盈利",
+        "毛利"
+      ],
+      "unsupported_reason": "当前影院数据没有成本字段，无法按已配置口径计算利润或盈利；可以查询销售额或扣除退款后的净收款。",
+      "values": [
+        {
+          "table": "ticket_orders",
+          "column": "sales_channel",
+          "mappings": {
+            "app": [
+              "app",
+              "App",
+              "APP"
+            ],
+            "web": [
+              "网站",
+              "网页",
+              "web"
+            ],
+            "kiosk": [
+              "自助机",
+              "kiosk"
+            ],
+            "counter": [
+              "柜台",
+              "counter"
+            ]
+          }
+        },
+        {
+          "table": "customers",
+          "column": "membership_level",
+          "context_by_alias": {
+            "普通": [
+              "会员",
+              "用户",
+              "顾客",
+              "银卡",
+              "金卡",
+              "白金"
+            ]
+          },
+          "mappings": {
+            "normal": [
+              "普通会员",
+              "普通用户",
+              "普通顾客",
+              "普通",
+              "normal"
+            ],
+            "silver": [
+              "银卡会员",
+              "银卡用户",
+              "银卡",
+              "silver"
+            ],
+            "gold": [
+              "金卡会员",
+              "金卡用户",
+              "金卡",
+              "gold"
+            ],
+            "platinum": [
+              "白金会员",
+              "白金用户",
+              "白金",
+              "platinum"
+            ]
+          }
+        },
+        {
+          "table": "ticket_orders",
+          "column": "order_status",
+          "mappings": {
+            "refunded": [
+              "全额退款的订单",
+              "全额退款订单",
+              "全额退款"
+            ],
+            "partial_refund": [
+              "部分退款的订单",
+              "部分退款订单",
+              "部分退款"
+            ]
+          },
+          "description": "全额退款对应refunded；部分退款对应partial_refund。只排除全额退款时仍保留部分退款订单，净收款只扣实际退款金额。"
+        }
+      ],
+      "metrics": [
+        {
+          "id": "purchasing_customers",
+          "table": "ticket_orders",
+          "aliases": [
+            "购票顾客人数",
+            "购票客户人数",
+            "独立购票人数",
+            "购票人数",
+            "购票顾客数",
+            "购票用户数",
+            "购票客户数"
+          ],
+          "expression": "COUNT(DISTINCT customer_id)",
+          "description": "购票人数按订单中的顾客去重计算；同一分组内同一顾客计一次，不等于票数或观影人次。",
+          "output_alias": "purchasing_customers",
+          "alternatives": [],
+          "unsafe_join_tables": [
+            "order_items",
+            "movie_reviews"
+          ],
+          "grain_keys": [
+            "ticket_orders.order_id"
+          ],
+          "display_name": "购票人数",
+          "unit": "people",
+          "additive": false
+        },
+        {
+          "id": "ticket_count",
+          "table": "ticket_orders",
+          "aliases": [
+            "订单售票张数",
+            "订单售票数",
+            "订单票数",
+            "售票张数",
+            "购票张数",
+            "销售票数",
+            "售票数",
+            "票数"
+          ],
+          "expression": "SUM(ticket_count)",
+          "description": "票数按订单记录的 ticket_count 求和，与去重购票人数区分。",
+          "output_alias": "tickets_sold",
+          "alternatives": [],
+          "unsafe_join_tables": [
+            "order_items",
+            "movie_reviews"
+          ],
+          "ambiguous_aliases": [
+            "售票张数",
+            "购票张数",
+            "销售票数",
+            "售票数",
+            "票数"
+          ],
+          "ambiguous_context": [
+            "场次",
+            "上座率",
+            "座位",
+            "已售"
+          ],
+          "grain_keys": [
+            "ticket_orders.order_id"
+          ],
+          "display_name": "售票张数",
+          "unit": "tickets",
+          "additive": true
+        },
+        {
+          "id": "net_revenue",
+          "table": "ticket_orders",
+          "aliases": [
+            "扣除退款后的收入",
+            "扣掉退款后的收入",
+            "扣退款后的收入",
+            "扣除退款后收入",
+            "扣掉退款后收入",
+            "实收收入",
+            "实际收款",
+            "净收入",
+            "净收款",
+            "实收金额",
+            "收入",
+            "实收"
+          ],
+          "expression": "SUM(total_amount - refund_amount)",
+          "description": "净收款为订单总金额减退款金额后求和，包含部分退款；不能据此计算利润。",
+          "output_alias": "net_revenue",
+          "alternatives": [
+            "SUM(total_amount) - SUM(refund_amount)"
+          ],
+          "assumptions_by_alias": {
+            "收入": "本数据源默认将“收入”解释为扣除退款后的净收款，即订单总金额减退款金额；如需退款前金额，应明确询问销售额。"
+          },
+          "unsafe_join_tables": [
+            "order_items",
+            "movie_reviews"
+          ],
+          "grain_keys": [
+            "ticket_orders.order_id"
+          ],
+          "display_name": "扣退款后收入",
+          "unit": "amount",
+          "additive": true
+        },
+        {
+          "id": "average_net_order_amount",
+          "table": "ticket_orders",
+          "aliases": [
+            "平均每笔订单实收",
+            "平均每单实收",
+            "每笔订单平均实收",
+            "每单平均实收",
+            "每单实收",
+            "每笔订单实收"
+          ],
+          "expression": "AVG(total_amount - refund_amount)",
+          "description": "平均每单实收以一条订单为统计单位，计算每单总金额减退款金额的平均值，不是每张票的均价。",
+          "output_alias": "average_net_order_amount",
+          "alternatives": [
+            "SUM(total_amount - refund_amount) / NULLIF(COUNT(*), 0)"
+          ],
+          "unsafe_join_tables": [
+            "order_items",
+            "movie_reviews"
+          ],
+          "grain_keys": [
+            "ticket_orders.order_id"
+          ],
+          "display_name": "平均每单实收",
+          "unit": "amount_per_order",
+          "additive": false
+        },
+        {
+          "id": "refund_amount_percentage",
+          "table": "ticket_orders",
+          "aliases": [
+            "退款金额占销售额的比例",
+            "退款金额占销售额比例",
+            "退款金额占总金额的比例",
+            "退款金额占订单总金额的比例",
+            "退款金额比例",
+            "退款金额占比",
+            "退款占比"
+          ],
+          "expression": "100.0 * SUM(refund_amount) / NULLIF(SUM(total_amount), 0)",
+          "description": "退款占比按退款金额除以销售额计算并乘100，单位为百分比；不是退款订单数占比。销售额为0时返回NULL。",
+          "output_alias": "refund_amount_percentage",
+          "alternatives": [
+            "SUM(refund_amount) / NULLIF(SUM(total_amount), 0) * 100.0"
+          ],
+          "unsafe_join_tables": [
+            "order_items",
+            "movie_reviews"
+          ],
+          "grain_keys": [
+            "ticket_orders.order_id"
+          ],
+          "display_name": "退款金额占比",
+          "unit": "percent",
+          "additive": false
+        },
+        {
+          "id": "gross_sales",
+          "table": "ticket_orders",
+          "aliases": [
+            "退款前收入",
+            "订单总金额",
+            "总销售额",
+            "销售金额",
+            "销售额",
+            "营业额"
+          ],
+          "expression": "SUM(total_amount)",
+          "description": "销售额按订单总金额求和，未扣退款。",
+          "output_alias": "gross_sales",
+          "alternatives": [],
+          "unsafe_join_tables": [
+            "order_items",
+            "movie_reviews"
+          ],
+          "grain_keys": [
+            "ticket_orders.order_id"
+          ],
+          "display_name": "销售额",
+          "unit": "amount",
+          "additive": true
+        },
+        {
+          "id": "order_count",
+          "table": "ticket_orders",
+          "aliases": [
+            "订单数量",
+            "订单数",
+            "订单量",
+            "下单次数",
+            "购票次数"
+          ],
+          "expression": "COUNT(*)",
+          "description": "订单数按一条订单计一次，不按订单明细或票数计数。",
+          "output_alias": "order_count",
+          "alternatives": [
+            "COUNT(order_id)"
+          ],
+          "unsafe_join_tables": [
+            "order_items",
+            "movie_reviews"
+          ],
+          "grain_keys": [
+            "ticket_orders.order_id"
+          ],
+          "display_name": "订单量",
+          "unit": "orders",
+          "additive": true
+        },
+        {
+          "id": "screening_tickets",
+          "table": "screenings",
+          "aliases": [
+            "场次已售票数",
+            "场次售票数",
+            "场次票数",
+            "已售票数"
+          ],
+          "expression": "SUM(sold_tickets)",
+          "description": "场次已售票数来自 screenings.sold_tickets，按一条场次一个统计单位求和；这是场次表独立记录，不能用订单 ticket_count 替代，关联订单或评价前先聚合以免重复。",
+          "output_alias": "screening_tickets",
+          "alternatives": [],
+          "unsafe_join_tables": [
+            "ticket_orders",
+            "order_items",
+            "movie_reviews"
+          ],
+          "grain_keys": [
+            "screenings.screening_id"
+          ],
+          "display_name": "场次已售票数",
+          "unit": "tickets",
+          "additive": true
+        },
+        {
+          "id": "movie_review_average",
+          "table": "movie_reviews",
+          "aliases": [
+            "观众平均评分",
+            "观众平均分",
+            "观众评分",
+            "评价平均评分",
+            "平均评分",
+            "平均分",
+            "评分"
+          ],
+          "context_any": [
+            "观众评价",
+            "观众评论",
+            "观众评分",
+            "评价",
+            "评论"
+          ],
+          "expression": "AVG(rating)",
+          "description": "观众平均评分按movie_reviews.rating求平均，按movie_id归属；不是movies.imdb_score，也不是电影表的外部评分。",
+          "output_alias": "viewer_average_rating",
+          "alternatives": [],
+          "unsafe_join_tables": [
+            "ticket_orders",
+            "order_items",
+            "screenings"
+          ],
+          "grain_keys": [
+            "movie_reviews.review_id"
+          ],
+          "display_name": "观众平均评分",
+          "unit": "rating",
+          "additive": false
+        },
+        {
+          "id": "movie_review_count",
+          "table": "movie_reviews",
+          "aliases": [
+            "观众评价数量",
+            "观众评价数",
+            "评价数量",
+            "评价条数",
+            "评价数",
+            "条观众评价",
+            "条观众评论",
+            "条评价",
+            "条评论"
+          ],
+          "context_any": [
+            "观众评价",
+            "观众评论",
+            "评价",
+            "评论"
+          ],
+          "expression": "COUNT(review_id)",
+          "description": "评价数量统计movie_reviews中的评价记录数，按movie_id归属；不是去重评价顾客数，不可因关联订单或场次重复计数。",
+          "output_alias": "review_count",
+          "alternatives": [
+            "COUNT(*)"
+          ],
+          "unsafe_join_tables": [
+            "ticket_orders",
+            "order_items",
+            "screenings"
+          ],
+          "grain_keys": [
+            "movie_reviews.review_id"
+          ],
+          "display_name": "评价数量",
+          "unit": "reviews",
+          "additive": true
+        }
+      ],
+      "dimensions": [
+        {
+          "id": "city",
+          "table": "cities",
+          "column": "city_name",
+          "group_by": [
+            "city_id",
+            "city_name"
+          ],
+          "aliases": [
+            "城市"
+          ],
+          "description": "城市经营收入按影院所在城市归属，通过订单的场次关联影院再关联城市；不要按购票顾客居住城市归属。",
+          "require_output": false,
+          "output_context_patterns": [
+            "按(?:各|每个)?城市",
+            "(?:各个|各|每个|每座)城市",
+            "哪(?:个|些|几个)城市",
+            "(?:最高|最多|前).{0,10}城市",
+            "城市.{0,12}(?:排名|排行|分布|对比|比较)"
+          ],
+          "entity_keys": [
+            "cities.city_id"
+          ]
+        },
+        {
+          "id": "cinema",
+          "table": "cinemas",
+          "column": "cinema_name",
+          "group_by": [
+            "cinema_id",
+            "cinema_name"
+          ],
+          "aliases": [
+            "影院"
+          ],
+          "description": "影院通过场次归集订单，分组保留影院ID与名称，避免不同城市同名影院被合并。",
+          "require_output": false,
+          "output_context_patterns": [
+            "按(?:各|每家)?影院",
+            "(?:各家|各|每家)影院",
+            "哪(?:家|些|几家)影院",
+            "(?:最高|最多|前).{0,10}影院",
+            "影院.{0,12}(?:排名|排行|分布|对比|比较)"
+          ],
+          "entity_keys": [
+            "cinemas.cinema_id"
+          ]
+        },
+        {
+          "id": "movie_genre",
+          "table": "movies",
+          "column": "genre",
+          "group_by": [
+            "genre"
+          ],
+          "aliases": [
+            "类电影",
+            "类影片",
+            "电影类型",
+            "影片类型",
+            "电影类别",
+            "影片类别",
+            "电影题材"
+          ],
+          "description": "几类电影、哪类电影指movies.genre电影类型，不能改成电影片名title；订单通过场次关联电影。",
+          "require_output": false,
+          "output_context_patterns": [
+            "按(?:电影|影片)?(?:类型|类别|题材)",
+            "(?:各|每)(?:类|种)(?:电影|影片)",
+            "哪.{0,4}类(?:电影|影片)",
+            "(?:电影类型|影片类型|电影类别|影片类别).{0,10}(?:排名|对比|分布|有哪些)"
+          ],
+          "entity_keys": [
+            "movies.genre"
+          ]
+        },
+        {
+          "id": "membership_level",
+          "table": "customers",
+          "column": "membership_level",
+          "group_by": [
+            "membership_level"
+          ],
+          "aliases": [
+            "会员等级",
+            "会员级别",
+            "用户等级",
+            "会员层级"
+          ],
+          "description": "会员等级是customers.membership_level，与订单的customer_id关联。普通、银卡、金卡、白金分别对应normal、silver、gold、platinum。",
+          "require_output": false,
+          "output_context_patterns": [
+            "按(?:会员|用户)(?:等级|级别|层级)",
+            "(?:各|每)(?:个|种)?(?:会员|用户)(?:等级|级别|层级)",
+            "(?:比较|对比).{0,16}(?:会员|用户)(?:等级|级别|层级)",
+            "(?:会员|用户)(?:等级|级别|层级).{0,16}(?:分别|各自|对比|排名)"
+          ],
+          "entity_keys": [
+            "customers.membership_level"
+          ]
+        },
+        {
+          "id": "movie",
+          "table": "movies",
+          "column": "title",
+          "group_by": [
+            "movie_id",
+            "title"
+          ],
+          "aliases": [
+            "电影名称",
+            "影片名称",
+            "片名",
+            "电影",
+            "影片"
+          ],
+          "context_by_alias": {
+            "电影": [
+              "观众评价",
+              "观众评论",
+              "观众评分",
+              "评价数量",
+              "评价数",
+              "平均评分",
+              "平均分"
+            ],
+            "影片": [
+              "观众评价",
+              "观众评论",
+              "观众评分",
+              "评价数量",
+              "评价数",
+              "平均评分",
+              "平均分"
+            ]
+          },
+          "description": "这里比较的是具体电影，输出片名并使用movie_id关联或分组；同名电影不能合并。",
+          "require_output": false,
+          "output_context_patterns": [
+            "哪些(?:电影|影片)",
+            "哪几部(?:电影|影片)",
+            "(?:电影|影片).{0,20}(?:排名|排进|进入前)",
+            "按(?:电影|影片)(?:名称)?"
+          ],
+          "entity_keys": [
+            "movies.movie_id"
+          ]
+        }
+      ],
+      "joins": [
+        {
+          "left_table": "ticket_orders",
+          "left_column": "screening_id",
+          "right_table": "screenings",
+          "right_column": "screening_id",
+          "cardinality": "many_to_one"
+        },
+        {
+          "left_table": "screenings",
+          "left_column": "cinema_id",
+          "right_table": "cinemas",
+          "right_column": "cinema_id",
+          "cardinality": "many_to_one"
+        },
+        {
+          "left_table": "cinemas",
+          "left_column": "city_id",
+          "right_table": "cities",
+          "right_column": "city_id",
+          "cardinality": "many_to_one"
+        },
+        {
+          "left_table": "screenings",
+          "left_column": "movie_id",
+          "right_table": "movies",
+          "right_column": "movie_id",
+          "cardinality": "many_to_one"
+        },
+        {
+          "left_table": "ticket_orders",
+          "left_column": "customer_id",
+          "right_table": "customers",
+          "right_column": "customer_id",
+          "cardinality": "many_to_one"
+        },
+        {
+          "left_table": "movie_reviews",
+          "left_column": "movie_id",
+          "right_table": "movies",
+          "right_column": "movie_id",
+          "cardinality": "many_to_one"
+        }
+      ],
+      "interpretations": [
+        {
+          "id": "purchase_based_preference",
+          "aliases": [
+            "最喜欢",
+            "喜欢",
+            "偏好",
+            "最受欢迎"
+          ],
+          "requires_metric_ids": [
+            "purchasing_customers"
+          ],
+          "ranking_metric_id": "purchasing_customers",
+          "description": "喜欢、偏好仅按用户明确要求的去重购票人数排名解释，是购票行为统计；不能推断心理偏好，不能用评分、订单量、票数或收入替代排名依据。",
+          "requires_dimension_ids": [
+            "movie_genre"
+          ]
+        }
+      ],
+      "analysis_rules": [
+        {
+          "id": "nested_city_cinema_ranking",
+          "requires_dimension_ids": [
+            "city",
+            "cinema"
+          ],
+          "requires_metric_ids": [
+            "net_revenue"
+          ],
+          "aliases": [
+            "每个城市",
+            "各城市",
+            "每座城市"
+          ],
+          "description": "先按城市的全部影院净收款排名选出指定数量城市；在每个入选城市内部独立按影院净收款排名选出指定数量影院，不能用全局影院LIMIT代替组内排名。精确TopN使用ROW_NUMBER；同收入时以稳定的城市ID或影院ID补充排序。"
+        },
+        {
+          "id": "cinema_share_of_city",
+          "requires_dimension_ids": [
+            "city",
+            "cinema"
+          ],
+          "requires_metric_ids": [
+            "net_revenue"
+          ],
+          "aliases": [
+            "占",
+            "份额",
+            "比例"
+          ],
+          "description": "影院贡献占比=100.0*影院净收款/NULLIF(所在城市全部影院净收款,0)，单位百分比；分母在影院TopN筛选前计算，不能只用入选TopN影院之和，城市总额与影院金额必须使用相同时间和退款口径。"
+        },
+        {
+          "id": "member_genre_ranking",
+          "requires_dimension_ids": [
+            "membership_level",
+            "movie_genre"
+          ],
+          "requires_metric_ids": [
+            "purchasing_customers"
+          ],
+          "aliases": [
+            "各自",
+            "分别",
+            "每个等级",
+            "每种等级"
+          ],
+          "description": "按会员等级和电影类型先聚合；每个等级内部独立按去重购票人数排名，不能把各等级合并后取全局TopN。精确TopN用ROW_NUMBER，人数相同时以genre稳定排序。人数仅在每个等级与类型组合内去重，同一顾客购买多种类型时可出现在不同类型中。订单量与净收款用于同行展示，不改变购票人数的排名依据。"
+        },
+        {
+          "id": "review_revenue_rank_mismatch",
+          "requires_dimension_ids": [
+            "movie"
+          ],
+          "requires_metric_ids": [
+            "movie_review_average",
+            "movie_review_count",
+            "net_revenue"
+          ],
+          "aliases": [
+            "两项排名",
+            "评分排名",
+            "收入排名",
+            "排进",
+            "排名"
+          ],
+          "review_count_min_patterns": [
+            "(?:至少|不少于|不低于|>=|≥)\\s*(?:有)?\\s*(\\d+)\\s*条(?:观众)?(?:评价|评论)"
+          ],
+          "output_aliases": [
+            "rating_rank",
+            "revenue_rank"
+          ],
+          "ranking_policy": "ROW_NUMBER",
+          "description": "观众评价与订单收入必须分别先按movie_id独立聚合，再关联电影；不能直接将评价记录与订单记录联结后统计，以免评分、评价数和收入被乘积复制。先按用户要求的最低评价数量筛选电影候选集合，再在同一完整候选集合内分别按观众平均评分、净收款降序计算rating_rank和revenue_rank；不能先按评分取前N再给收入排名，也不能用全库收入排名或用不同候选集合。精确前N采用ROW_NUMBER，相同指标用movie_id稳定排序。最后才应用用户要求的评分排名与收入排名比较条件，并输出片名、viewer_average_rating、review_count、net_revenue、rating_rank、revenue_rank。评价达标但无订单的电影仍属于候选集合，净收款按0处理，不能用INNER JOIN遗漏。电影收入通过ticket_orders→screenings→movies按订单粒度扣实际退款，收入指标不使用电影表的box_office_million。",
+          "rank_contract": {
+            "kind": "parallel_rankings",
+            "rankings": [
+              {
+                "output_alias": "rating_rank",
+                "metric_id": "movie_review_average",
+                "direction": "desc",
+                "partition_by": []
+              },
+              {
+                "output_alias": "revenue_rank",
+                "metric_id": "net_revenue",
+                "direction": "desc",
+                "partition_by": []
+              }
+            ],
+            "policy": "ROW_NUMBER",
+            "tie_keys": [
+              "movies.movie_id"
+            ],
+            "shared_population": true,
+            "population_entity_id": "movie",
+            "population_min_count": {
+              "metric_id": "movie_review_count",
+              "threshold_key": "review_count_min"
+            }
+          },
+          "assumptions": [
+            "评分与收入两项排名在同一候选集合内计算；如果问题设置最低评价数量门槛，则先按该门槛筛选候选电影。",
+            "评分排名使用观众评价的原始平均值AVG(movie_reviews.rating)，不使用展示时四舍五入后的评分排序。",
+            "前N采用ROW_NUMBER得到指定数量；指标相同的电影按movie_id稳定排序，不额外纳入全部并列项。"
+          ],
+          "rank_filter_patterns": [
+            {
+              "output_alias": "rating_rank",
+              "operator": "lte",
+              "patterns": [
+                "(?:观众)?(?:平均评分|平均分|评分)\\s*(?:排名)?\\s*(?:(?:排进|进入|进|位居|排在)\\s*)?前\\s*(\\d+)"
+              ]
+            },
+            {
+              "output_alias": "revenue_rank",
+              "operator": "gt",
+              "patterns": [
+                "(?:净收入|净收款|收入)\\s*(?:排名)?\\s*(?:没有|未|没|不)\\s*(?:排进|进入|进|位居|排在)\\s*前\\s*(\\d+)"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -6,6 +6,7 @@ from app.core.errors import AppError
 from app.services.sql_security import (
     extract_used_columns,
     extract_used_tables,
+    can_repair_readonly_output,
     reject_dangerous_intent,
     validate_and_normalize_sql,
 )
@@ -42,6 +43,30 @@ ORDER BY city_net_revenue DESC, city_id, cinema_rank
 
 
 class SQLSecurityTests(unittest.TestCase):
+    def test_semicolon_in_literal_is_one_statement(self):
+        normalized, checks = validate_and_normalize_sql("SELECT ';' AS label", max_rows=10)
+        self.assertIn("';'", normalized)
+        self.assertTrue(checks.has_single_statement)
+
+    def test_only_safe_stacked_selects_are_repairable_not_executable(self):
+        candidate = "SELECT 1; WITH x AS (SELECT 2) SELECT * FROM x"
+        self.assertTrue(can_repair_readonly_output(candidate, 2004))
+        with self.assertRaises(AppError) as caught:
+            validate_and_normalize_sql(candidate, 10)
+        self.assertEqual(caught.exception.code, 2004)
+        for sql in (
+            "SELECT 1; DELETE FROM orders",
+            "SELECT 1; WITH x AS (DELETE FROM orders RETURNING *) SELECT * FROM x",
+            "SELECT 1; SELECT pg_sleep(1)",
+            "SELECT 1; SELECT * FROM pg_catalog.pg_tables",
+            "SELECT 1; SELECT 2 -- comment",
+            "SELECT 1; SELECT 2 FOR UPDATE",
+        ):
+            with self.subTest(sql=sql):
+                self.assertFalse(can_repair_readonly_output(sql, 2004))
+        self.assertFalse(can_repair_readonly_output("SELECT 1", 2004))
+        self.assertFalse(can_repair_readonly_output(candidate, 2008))
+
     def test_rejects_empty_non_select_and_multiple_statements(self):
         cases = [
             (" ", 2000),
@@ -169,8 +194,87 @@ class SQLSecurityTests(unittest.TestCase):
         for sql in cases:
             with self.subTest(sql=sql):
                 normalized, checks = validate_and_normalize_sql(sql, max_rows=100)
-                self.assertEqual(normalized, sql)
+                parsed = parse_one(normalized, read="postgres")
+                limit = parsed.args["limit"]
+                value = limit.args.get("count") if isinstance(limit, exp.Fetch) else limit.expression
+                while isinstance(value, exp.Paren):
+                    value = value.this
+                self.assertEqual(value.this, "0" if "LIMIT 0" in sql else "5")
                 self.assertFalse(checks.limit_applied)
+
+    def test_quotes_reserved_source_aliases_with_and_without_existing_limit(self):
+        for alias in ("to", "user", "end", "constraint", "order"):
+            for existing_limit in ("", " LIMIT 5"):
+                with self.subTest(alias=alias, limit=existing_limit):
+                    sql = f"SELECT {alias}.order_id FROM ticket_orders AS {alias}" + existing_limit
+                    normalized, checks = validate_and_normalize_sql(sql, max_rows=100)
+                    parsed = parse_one(normalized, read="postgres")
+                    table = next(parsed.find_all(exp.Table))
+                    qualifier = next(parsed.find_all(exp.Column)).args["table"]
+                    self.assertTrue(table.args["alias"].this.args["quoted"])
+                    self.assertTrue(qualifier.args["quoted"])
+                    self.assertEqual(qualifier.this, alias)
+                    self.assertEqual(parsed.args["limit"].expression.this, "5" if existing_limit else "100")
+                    self.assertEqual(checks.limit_applied, not bool(existing_limit))
+
+    def test_alias_folding_preserves_postgres_quoted_case_functions_and_literals(self):
+        sql = (
+            'SELECT COALESCE(TO.TOTAL, 0) AS amount, "MixedCase".id, '
+            "'TO to FROM' AS label FROM ticket_orders TO "
+            'JOIN movies "MixedCase" ON "MixedCase".id = TO.movie_id LIMIT 5'
+        )
+        normalized, checks = validate_and_normalize_sql(sql, max_rows=100)
+        parsed = parse_one(normalized, read="postgres")
+        aliases = [table.args["alias"].this for table in parsed.find_all(exp.Table)]
+        self.assertEqual([alias.this for alias in aliases], ["to", "MixedCase"])
+        self.assertTrue(all(alias.args["quoted"] for alias in aliases))
+        columns = list(parsed.find_all(exp.Column))
+        self.assertIn("TOTAL", [column.name for column in columns])
+        self.assertEqual({column.table for column in columns}, {"to", "MixedCase"})
+        self.assertIsNotNone(parsed.find(exp.Coalesce))
+        self.assertIn("TO to FROM", [literal.this for literal in parsed.find_all(exp.Literal) if literal.is_string])
+        self.assertFalse(checks.limit_applied)
+
+    def test_quotes_cte_alias_and_reference_but_preserves_same_named_physical_table(self):
+        sql = (
+            "WITH To AS (SELECT o.order_id FROM ticket_orders O) "
+            'SELECT To.order_id FROM To JOIN public."to" AS physical '
+            "ON physical.order_id = To.order_id LIMIT 5"
+        )
+        normalized, checks = validate_and_normalize_sql(sql, max_rows=100)
+        parsed = parse_one(normalized, read="postgres")
+        cte = next(parsed.find_all(exp.CTE))
+        self.assertEqual(cte.alias, "to")
+        self.assertTrue(cte.args["alias"].this.args["quoted"])
+        references = [table for table in parsed.find_all(exp.Table) if table.name == "to"]
+        self.assertTrue(next(table for table in references if not table.db).this.args["quoted"])
+        self.assertTrue(next(table for table in references if table.db == "public").this.args["quoted"])
+        self.assertFalse(next(table for table in parsed.find_all(exp.Table) if table.name == "ticket_orders").this.args.get("quoted", False))
+        self.assertEqual(extract_used_tables(normalized), ["ticket_orders", "to"])
+        self.assertFalse(checks.limit_applied)
+
+    def test_quotes_derived_and_correlated_source_aliases(self):
+        sql = (
+            "SELECT OuterSource.order_id FROM (SELECT InnerSource.order_id "
+            "FROM ticket_orders InnerSource) OuterSource WHERE EXISTS "
+            "(SELECT 1 FROM ticket_orders OtherSource "
+            "WHERE OtherSource.order_id = OuterSource.order_id) LIMIT 5"
+        )
+        normalized, _ = validate_and_normalize_sql(sql, max_rows=100)
+        parsed = parse_one(normalized, read="postgres")
+        self.assertTrue(all(alias.this.args["quoted"] for alias in parsed.find_all(exp.TableAlias)))
+        self.assertTrue(all(column.args["table"].args["quoted"] for column in parsed.find_all(exp.Column)))
+        self.assertEqual({column.table for column in parsed.find_all(exp.Column)}, {"outersource", "innersource", "othersource"})
+
+    def test_alias_normalization_does_not_allow_writes_or_forbidden_functions(self):
+        for sql in (
+            "SELECT to.order_id FROM ticket_orders to FOR UPDATE",
+            "WITH to AS (DELETE FROM ticket_orders RETURNING order_id) SELECT * FROM to",
+            "SELECT pg_sleep(1) FROM ticket_orders to LIMIT 5",
+            "SELECT to.order_id FROM ticket_orders to; DELETE FROM ticket_orders",
+        ):
+            with self.subTest(sql=sql), self.assertRaises(AppError):
+                validate_and_normalize_sql(sql, max_rows=100)
 
     def test_computed_limit_is_preserved_beneath_outer_cap(self):
         sql = "SELECT * FROM orders LIMIT 2 + 3 OFFSET 4"

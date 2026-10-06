@@ -5,7 +5,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.models.contracts import DataSourceConfig
-from app.services.schema_service import fetch_schema
+from app.services.schema_service import SCHEMA_METADATA_VERSION, fetch_schema
 from app.services.sqlite_store import get_connection, init_sqlite_store
 
 
@@ -78,7 +78,9 @@ def fetch_schema_with_cache(data_source_id: str) -> tuple[DataSourceConfig, list
     row = _cache_row(data_source_id)
     now_ts = int(time.time())
     if row and row["expires_at"] >= now_ts:
-        return datasource, json.loads(row["schema_json"])
+        cached_schema = json.loads(row["schema_json"])
+        if all(table.get("schema_metadata_version") == SCHEMA_METADATA_VERSION for table in cached_schema):
+            return datasource, cached_schema
     schema = fetch_schema(datasource)
     _save_cache(data_source_id, schema)
     return datasource, schema

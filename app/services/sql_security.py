@@ -3,7 +3,8 @@ from dataclasses import dataclass
 
 from sqlglot import ErrorLevel, exp, parse
 from sqlglot.errors import ParseError, TokenError, UnsupportedError
-from sqlglot.optimizer.scope import traverse_scope
+from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
+from sqlglot.optimizer.scope import Scope, traverse_scope
 
 from app.core.errors import AppError
 
@@ -83,12 +84,6 @@ class SafetyChecks:
         }
 
 
-def _ensure_single_statement(sql: str) -> bool:
-    trimmed = sql.strip()
-    inner = trimmed[:-1] if trimmed.endswith(";") else trimmed
-    return ";" not in inner
-
-
 def _is_select_query(query: exp.Expression) -> bool:
     if isinstance(query, exp.Subquery):
         return _is_select_query(query.this)
@@ -99,7 +94,7 @@ def _is_select_query(query: exp.Expression) -> bool:
 
 def _parse_select_query(sql: str) -> exp.Query:
     try:
-        statements = parse(sql, read="postgres", error_level=ErrorLevel.RAISE)
+        statements = [item for item in parse(sql, read="postgres", error_level=ErrorLevel.RAISE) if item is not None]
     except (ParseError, TokenError) as exc:
         raise AppError(
             code=2008,
@@ -162,8 +157,37 @@ def _check_forbidden(sql: str) -> None:
             )
 
 
+def _quote_source_aliases(query: exp.Query) -> exp.Query:
+    """Quote source aliases without changing PostgreSQL identifier resolution.
+
+    SQLGlot accepts some unquoted aliases that PostgreSQL reserves. Fold an
+    unquoted alias before quoting it, and retain the case of quoted aliases.
+    Resolve CTE references by scope so a same-named physical table remains a
+    physical table. Field names, functions and literals are not rewritten.
+    """
+    # Normalize relation names for scope lookup, including unquoted CTE names.
+    # PostgreSQL folds these names even when their spelling uses upper case.
+    for table in query.find_all(exp.Table):
+        if isinstance(table.this, exp.Identifier):
+            normalize_identifiers(table.this, dialect="postgres")
+    for alias in query.find_all(exp.TableAlias):
+        if isinstance(alias.this, exp.Identifier):
+            normalize_identifiers(alias.this, dialect="postgres")
+            alias.this.set("quoted", True)
+    for column in query.find_all(exp.Column):
+        qualifier = column.args.get("table")
+        if isinstance(qualifier, exp.Identifier):
+            normalize_identifiers(qualifier, dialect="postgres")
+            qualifier.set("quoted", True)
+    for scope in traverse_scope(query):
+        for name, reference in scope.references:
+            source = scope.sources.get(name)
+            if isinstance(source, Scope) and isinstance(reference, exp.Table) and isinstance(reference.this, exp.Identifier):
+                reference.this.set("quoted", True)
+    return query
+
+
 def _normalize_limit(sql: str, max_rows: int, query: exp.Query) -> tuple[str, bool]:
-    stripped = sql.strip().rstrip(";").strip()
     # Only the outer query limit bounds returned rows. A LIMIT inside a CTE
     # or one branch of a UNION must not stand in for the outer result cap.
     limit = query.args.get("limit")
@@ -180,15 +204,15 @@ def _normalize_limit(sql: str, max_rows: int, query: exp.Query) -> tuple[str, bo
     )
     is_numeric_limit = isinstance(value, exp.Literal) and value.is_int and int(value.this) >= 0
     if is_numeric_limit and int(value.this) <= max_rows and not has_ties_or_percent:
-        return stripped, False
-    if limit and (has_ties_or_percent or (not is_numeric_limit and not isinstance(value, exp.Null))):
+        capped, limit_applied = query, False
+    elif limit and (has_ties_or_percent or (not is_numeric_limit and not isinstance(value, exp.Null))):
         # Preserve expression limits and FETCH WITH TIES before applying the
         # result cap; replacing them could increase a deliberately smaller limit.
-        capped = exp.select("*").from_(query.subquery("_limited_result")).limit(max_rows)
+        capped, limit_applied = exp.select("*").from_(query.subquery("_limited_result")).limit(max_rows), True
     else:
-        capped = query.limit(max_rows)
+        capped, limit_applied = query.limit(max_rows), True
     try:
-        return capped.sql(dialect="postgres", unsupported_level=ErrorLevel.RAISE), True
+        return _quote_source_aliases(capped).sql(dialect="postgres", unsupported_level=ErrorLevel.RAISE), limit_applied
     except UnsupportedError as exc:
         raise AppError(
             code=2008,
@@ -226,23 +250,32 @@ def validate_and_normalize_sql(sql: str, max_rows: int) -> tuple[str, SafetyChec
             error_type="sql_security_error",
             status_code=400,
         )
-    has_single_statement = _ensure_single_statement(sql)
-    if not has_single_statement:
-        raise AppError(
-            code=2004,
-            message="SQL 必须是单语句",
-            error_type="sql_security_error",
-            status_code=400,
-        )
     query = _parse_select_query(sql)
     _check_forbidden(sql)
     normalized_sql, limit_applied = _normalize_limit(sql, max_rows=max_rows, query=query)
     checks = SafetyChecks(
         is_select_only=True,
-        has_single_statement=has_single_statement,
+        has_single_statement=True,
         limit_applied=limit_applied,
     )
     return normalized_sql, checks
+
+
+def can_repair_readonly_output(sql: str, error_code: int) -> bool:
+    """Only regenerate stacked, independently safe SELECTs; never execute any of them."""
+    if error_code != 2004:
+        return False
+    try:
+        _check_forbidden(sql)
+        statements = [item for item in parse(sql, read="postgres", error_level=ErrorLevel.RAISE) if item is not None]
+        return len(statements) > 1 and all(
+            _is_select_query(query)
+            and all(_is_select_query(cte.this) for cte in query.find_all(exp.CTE))
+            and not any(isinstance(node, (exp.DML, exp.DDL, exp.Command)) for node in query.walk())
+            for query in statements
+        )
+    except (AppError, ParseError, TokenError):
+        return False
 
 
 def reject_dangerous_intent(question: str) -> None:

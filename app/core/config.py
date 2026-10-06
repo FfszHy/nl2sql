@@ -75,6 +75,10 @@ class Settings:
         "output.choices.0.message.content,output.text",
     )
     llm_timeout_seconds: int = _to_int(os.getenv("LLM_TIMEOUT_SECONDS"), 120)
+    sql_generation_max_attempts: int = max(1, min(10, _to_int(os.getenv("SQL_GENERATION_MAX_ATTEMPTS"), 5)))
+    query_audit_path: str = os.getenv("QUERY_AUDIT_PATH", "data/query-audit.jsonl")
+    query_audit_max_bytes: int = max(4096, min(10 * 1024 * 1024, _to_int(os.getenv("QUERY_AUDIT_MAX_BYTES"), 1024 * 1024)))
+    query_audit_backup_count: int = max(1, min(10, _to_int(os.getenv("QUERY_AUDIT_BACKUP_COUNT"), 3)))
     embedding_api_url: str = os.getenv(
         "EMBEDDING_API_URL",
         "https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding",
