@@ -6,6 +6,14 @@ A local natural-language query tool for PostgreSQL, with a Python/FastAPI backen
 
 **发布范围：后端、示例数据脚本和 React/Vite 网页前端均提供源码，前端包含依赖锁文件和构建配置。已在 Node.js 24 环境完成依赖安装与前端构建验证。** 本项目面向本地开发与演示，通过浏览器使用。
 
+## Demo 视频
+
+44 秒实际录屏，依次展示会员购票偏好的条形图、月度收入折线图、渠道收入构成饼图，以及观众评分与收入关系的散点图。使用仓库影院合成数据，录屏问题见下方 [Demo 录屏问题](#demo-录屏问题)。点击动图预览观看完整 MP4。
+
+[![Demo 录屏预览：会员偏好、月度趋势、渠道构成与评分收入关系](demo_video/demo-preview.gif)](https://github.com/FfszHy/nl2sql/blob/main/demo_video/demo.mp4)
+
+[观看完整视频（MP4）](https://github.com/FfszHy/nl2sql/blob/main/demo_video/demo.mp4) · [下载 MP4](https://github.com/FfszHy/nl2sql/raw/refs/heads/main/demo_video/demo.mp4)
+
 ## 功能
 
 - 注册 PostgreSQL 数据源，缓存表结构、字段注释及真实主键、唯一键和外键；区分配置关联与数据库确认的关联。
