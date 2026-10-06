@@ -8,11 +8,11 @@ A local natural-language query tool for PostgreSQL, with a Python/FastAPI backen
 
 ## Demo 视频
 
-44 秒实际录屏，依次展示会员购票偏好的条形图、月度收入折线图、渠道收入构成饼图，以及观众评分与收入关系的散点图。使用仓库影院合成数据，录屏问题见下方 [Demo 录屏问题](#demo-录屏问题)。点击动图预览观看完整 MP4。
+44 秒实际录屏，依次展示会员购票偏好的条形图、月度收入折线图、渠道收入构成饼图，以及观众评分与收入关系的散点图。使用仓库影院合成数据，录屏问题见下方 [Demo 录屏问题](#demo-录屏问题)。下方动图自动播放完整录屏内容，高清版本可下载 MP4 观看。
 
-[![Demo 录屏预览：会员偏好、月度趋势、渠道构成与评分收入关系](demo_video/demo-preview.gif)](https://github.com/FfszHy/nl2sql/blob/main/demo_video/demo.mp4)
+[![Demo 录屏预览：会员偏好、月度趋势、渠道构成与评分收入关系](demo_video/demo-preview.gif)](https://github.com/FfszHy/nl2sql/raw/refs/heads/main/demo_video/demo.mp4)
 
-[观看完整视频（MP4）](https://github.com/FfszHy/nl2sql/blob/main/demo_video/demo.mp4) · [下载 MP4](https://github.com/FfszHy/nl2sql/raw/refs/heads/main/demo_video/demo.mp4)
+[下载高清录屏（MP4，约 6.9 MB）](https://github.com/FfszHy/nl2sql/raw/refs/heads/main/demo_video/demo.mp4)
 
 ## 功能
 
