@@ -1,6 +1,10 @@
 import re
 from dataclasses import dataclass
 
+from sqlglot import ErrorLevel, exp, parse
+from sqlglot.errors import ParseError, TokenError, UnsupportedError
+from sqlglot.optimizer.scope import traverse_scope
+
 from app.core.errors import AppError
 
 
@@ -8,6 +12,7 @@ FORBIDDEN_KEYWORDS = [
     "insert",
     "update",
     "delete",
+    "merge",
     "drop",
     "alter",
     "truncate",
@@ -84,8 +89,40 @@ def _ensure_single_statement(sql: str) -> bool:
     return ";" not in inner
 
 
-def _ensure_select_only(sql: str) -> bool:
-    return bool(re.match(r"^\s*select\b", sql, flags=re.IGNORECASE))
+def _is_select_query(query: exp.Expression) -> bool:
+    if isinstance(query, exp.Subquery):
+        return _is_select_query(query.this)
+    if isinstance(query, exp.SetOperation):
+        return _is_select_query(query.this) and _is_select_query(query.expression)
+    return isinstance(query, exp.Select)
+
+
+def _parse_select_query(sql: str) -> exp.Query:
+    try:
+        statements = parse(sql, read="postgres", error_level=ErrorLevel.RAISE)
+    except (ParseError, TokenError) as exc:
+        raise AppError(
+            code=2008,
+            message="生成的 SQL 无法解析，请重试",
+            error_type="sql_security_error",
+            status_code=400,
+        ) from exc
+    if len(statements) != 1:
+        raise AppError(2004, "SQL 必须是单语句", "sql_security_error", 400)
+    query = statements[0]
+    if (
+        query is None
+        or not _is_select_query(query)
+        or any(not _is_select_query(cte.this) for cte in query.find_all(exp.CTE))
+        or any(isinstance(node, (exp.DML, exp.DDL, exp.Command)) for node in query.walk())
+    ):
+        raise AppError(
+            code=2005,
+            message="仅允许只读 SELECT SQL（可包含只读 WITH/CTE）",
+            error_type="sql_security_error",
+            status_code=400,
+        )
+    return query
 
 
 def _check_forbidden(sql: str) -> None:
@@ -125,53 +162,60 @@ def _check_forbidden(sql: str) -> None:
             )
 
 
-def _normalize_limit(sql: str, max_rows: int) -> tuple[str, bool]:
+def _normalize_limit(sql: str, max_rows: int, query: exp.Query) -> tuple[str, bool]:
     stripped = sql.strip().rstrip(";").strip()
-    limit_pattern = re.compile(
-        r"\blimit\s+(\d+)(?:\s+offset\s+(\d+))?\s*$", flags=re.IGNORECASE
+    # Only the outer query limit bounds returned rows. A LIMIT inside a CTE
+    # or one branch of a UNION must not stand in for the outer result cap.
+    limit = query.args.get("limit")
+    value = None
+    if isinstance(limit, exp.Limit):
+        value = limit.expression
+    elif isinstance(limit, exp.Fetch):
+        value = limit.args.get("count")
+    while isinstance(value, exp.Paren):
+        value = value.this
+    options = limit.args.get("limit_options") if isinstance(limit, exp.Fetch) else None
+    has_ties_or_percent = bool(
+        options and (options.args.get("with_ties") or options.args.get("percent"))
     )
-    offset_pattern = re.compile(r"\boffset\s+(\d+)\s*$", flags=re.IGNORECASE)
-    matched = limit_pattern.search(stripped)
-    if matched:
-        limit_value = int(matched.group(1))
-        offset_value = matched.group(2)
-        if limit_value <= max_rows:
-            return stripped, False
-        suffix = f"LIMIT {max_rows}" + (f" OFFSET {offset_value}" if offset_value else "")
-        return f"{stripped[:matched.start()].rstrip()} {suffix}", True
-    offset_only = offset_pattern.search(stripped)
-    if offset_only:
-        prefix = stripped[:offset_only.start()].rstrip()
-        return f"{prefix} LIMIT {max_rows} {offset_only.group(0).strip()}", True
-    return f"{stripped} LIMIT {max_rows}", True
+    is_numeric_limit = isinstance(value, exp.Literal) and value.is_int and int(value.this) >= 0
+    if is_numeric_limit and int(value.this) <= max_rows and not has_ties_or_percent:
+        return stripped, False
+    if limit and (has_ties_or_percent or (not is_numeric_limit and not isinstance(value, exp.Null))):
+        # Preserve expression limits and FETCH WITH TIES before applying the
+        # result cap; replacing them could increase a deliberately smaller limit.
+        capped = exp.select("*").from_(query.subquery("_limited_result")).limit(max_rows)
+    else:
+        capped = query.limit(max_rows)
+    try:
+        return capped.sql(dialect="postgres", unsupported_level=ErrorLevel.RAISE), True
+    except UnsupportedError as exc:
+        raise AppError(
+            code=2008,
+            message="生成的 SQL 包含暂不支持的语法，请重试",
+            error_type="sql_security_error",
+            status_code=400,
+        ) from exc
 
 
 def extract_used_tables(sql: str) -> list[str]:
-    names = re.findall(
-        r'\b(?:from|join)\s+["`]?(?:[a-zA-Z0-9_]+\.)?([a-zA-Z0-9_]+)["`]?',
-        sql,
-        flags=re.IGNORECASE,
-    )
+    query = _parse_select_query(sql)
     unique: list[str] = []
-    for name in names:
-        if name not in unique:
-            unique.append(name)
+    for scope in traverse_scope(query):
+        for source in scope.sources.values():
+            # A CTE reference resolves to a Scope; a physical table resolves
+            # to a Table, even when it shares a name with a CTE elsewhere.
+            if isinstance(source, exp.Table) and source.name not in unique:
+                unique.append(source.name)
     return unique
 
 
 def extract_used_columns(sql: str) -> list[str]:
-    match = re.search(r"^\s*select\s+(.*?)\s+from\s", sql, flags=re.IGNORECASE | re.DOTALL)
-    if not match:
-        return []
-    segment = match.group(1)
-    if segment.strip() == "*":
-        return ["*"]
-    parts = [item.strip() for item in segment.split(",")]
-    cleaned: list[str] = []
-    for part in parts:
-        part = re.sub(r"\s+as\s+.+$", "", part, flags=re.IGNORECASE).strip()
-        cleaned.append(part)
-    return cleaned
+    query = _parse_select_query(sql)
+    return [
+        (item.this if isinstance(item, exp.Alias) else item).sql(dialect="postgres")
+        for item in query.selects
+    ]
 
 
 def validate_and_normalize_sql(sql: str, max_rows: int) -> tuple[str, SafetyChecks]:
@@ -190,18 +234,11 @@ def validate_and_normalize_sql(sql: str, max_rows: int) -> tuple[str, SafetyChec
             error_type="sql_security_error",
             status_code=400,
         )
-    is_select_only = _ensure_select_only(sql)
-    if not is_select_only:
-        raise AppError(
-            code=2005,
-            message="仅允许 SELECT SQL",
-            error_type="sql_security_error",
-            status_code=400,
-        )
+    query = _parse_select_query(sql)
     _check_forbidden(sql)
-    normalized_sql, limit_applied = _normalize_limit(sql, max_rows=max_rows)
+    normalized_sql, limit_applied = _normalize_limit(sql, max_rows=max_rows, query=query)
     checks = SafetyChecks(
-        is_select_only=is_select_only,
+        is_select_only=True,
         has_single_statement=has_single_statement,
         limit_applied=limit_applied,
     )

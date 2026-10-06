@@ -2,7 +2,7 @@
 
 The repository's MIT license applies to its original code. Third-party code retains its own licenses. Existing license comments in `frontend/dist/assets/*.js` are preserved.
 
-The frontend source, package manifest, and lockfile are unavailable in this release. The following inventory was recovered from the supplied bundle; it is **not a complete software bill of materials**. Versions marked unknown have not been reconstructed from a lockfile. The stored license texts are upstream references, not a claim that the entire original dependency graph has been recovered.
+The frontend source, package manifest, and lockfile are available. The frontend inventory below was recovered from the supplied bundle; it is **not a complete software bill of materials**. Versions marked unknown describe that bundle inventory, not all dependencies now resolved in the lockfile. The stored license texts are upstream references.
 
 | Component | Version evidence | License / local copy | Upstream source |
 | --- | --- | --- | --- |
@@ -14,9 +14,10 @@ The frontend source, package manifest, and lockfile are unavailable in this rele
 | fast-deep-equal | Implementation identified; exact version unknown | [MIT reference from v3.1.3](third_party/licenses/fast-deep-equal-LICENSE.txt) | [Upstream license](https://github.com/epoberezkin/fast-deep-equal/blob/v3.1.3/LICENSE) |
 | Microsoft TypeScript helpers / tslib | Microsoft license block retained; exact bundled version unknown | [License reference from tslib 2.3.0](third_party/licenses/microsoft-tslib-LICENSE.txt) | [Upstream license](https://github.com/microsoft/tslib/blob/2.3.0/LICENSE.txt) |
 | size-sensor | Embedded version 1.0.3 | Upstream declares ISC; author hustcc | [Official package metadata](https://registry.npmjs.org/size-sensor/1.0.3), [upstream repository](https://github.com/hustcc/size-sensor) |
+| SQLGlot (backend SQL structure checks) | Pinned 30.21.0 in requirements.txt | [MIT](third_party/licenses/sqlglot-LICENSE.txt) | [SQLGlot 30.21.0](https://pypi.org/project/sqlglot/30.21.0/) |
 
 The official `size-sensor@1.0.3` package declares the ISC license but does not include a standalone LICENSE or NOTICE file. That declaration is recorded here without inventing an upstream copyright year or license file.
 
 ECharts and ZRender 6.0.0 upstream manifests specify tslib 2.3.0. This is upstream dependency evidence, not proof of the original application's resolved dependency version.
 
-When the original frontend sources become available, restore their manifest and lockfile, reconcile this inventory against the resolved dependencies, and regenerate the frontend with the required attribution files.
+Frontend builds use the restored manifest and lockfile; retain the required upstream attribution when regenerating the bundle. Python dependencies installed from requirements.txt retain their own package licenses.

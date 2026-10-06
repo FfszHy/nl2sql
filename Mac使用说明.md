@@ -1,6 +1,6 @@
 # 智能问数 · macOS 运行说明
 
-本项目使用 FastAPI 后端和网页界面，支持 PostgreSQL。默认仅在本机运行；前端现阶段只提供 `frontend/dist/` 构建产物，无法从源码重建。详细功能和安全边界见 [README](README.md)。
+本项目使用 FastAPI 后端和 React/Vite 网页界面，支持 PostgreSQL，通过浏览器使用。默认仅在本机运行；前端源码、依赖锁文件和构建配置已补齐，并在 Node.js 24 环境完成安装与构建验证。其他 Node.js 版本未在本次验证。详细功能和安全边界见 [README](README.md)。
 
 ## 1. 创建 conda 环境
 
@@ -65,14 +65,23 @@ conda activate nlp2sql
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-终端二，在同一个项目目录：
+终端二，从同一个项目目录进入前端；需先安装 Node.js，可使用已验证的 Node.js 24：
 
 ```bash
-conda activate nlp2sql
-python -m http.server 5173 --bind 127.0.0.1 --directory frontend/dist
+cd frontend
+npm ci
+npm run dev -- --host 127.0.0.1
 ```
 
 访问 <http://127.0.0.1:5173>，进入「设置」，将后端地址填为 `http://127.0.0.1:8000`，填写只读数据库连接并保存注册。语义初始化需要调用模型/embedding API，失败信息会在返回结果中提供。
+
+重新构建网页，在 `frontend/` 中执行 `npm run build`，输出到 `frontend/dist/`。也可在项目根目录直接启动现有构建产物：
+
+```bash
+python3 -m http.server 5173 --bind 127.0.0.1 --directory frontend/dist
+```
+
+静态服务没有开发代理，需填写后端地址。Vite 和静态服务都只提供网页，Python 后端仍需在另一个终端单独启动。
 
 问数示例：`按类型统计电影数量`、`票房最高的电影有哪些`。停止服务时在两个终端分别按 `Ctrl+C`。
 
@@ -81,6 +90,6 @@ python -m http.server 5173 --bind 127.0.0.1 --directory frontend/dist
 - **端口冲突**：可以更换 8000/5173；同时更新网页的后端地址。前端端口变化时，修改 `.env` 中 `CORS_ALLOW_ORIGINS` 为对应本地地址。
 - **数据库连接失败**：检查主机、端口、用户名、库名、SSL 和网络；Pooler 参数应以数据库管理端给出的值为准。
 - **模型或向量化失败**：核对 `.env` 中接口地址、凭据、模型名称和请求格式；注册成功不表示语义索引一定成功。
-- **SQL 被拒绝**：当前检查为保守正则规则，包括拒绝 SQL 注释；查看脱敏后的返回错误并核对实际生成 SQL。
+- **SQL 被拒绝**：已支持只读 WITH/CTE；主查询和每个 CTE 都须为 SELECT 查询，仍拒绝写入、危险函数、系统库和 SQL 注释。网页会显示后端具体错误；终端中的 `sql_validation_failed` 包含候选 SQL 与 trace_id，可据此核对误拒原因，分享前先脱敏。
 
 本项目无 API 鉴权，当前密码持久化为可逆混淆。保持仅本机使用，不要将服务直接暴露到公网。问题、Schema 与部分查询结果会发送给配置的模型服务，详见 README 的数据流说明。

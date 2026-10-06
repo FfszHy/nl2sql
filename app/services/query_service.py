@@ -121,6 +121,7 @@ def _run_once(
     max_rows: int,
     include_explanation: bool,
     error_feedback: str | None = None,
+    trace_id: str | None = None,
 ) -> tuple[dict, dict[str, object]]:
     generated_sql, sql_prompt_meta = generate_sql(
         question=question,
@@ -129,7 +130,18 @@ def _run_once(
         max_rows=max_rows,
         error_feedback=error_feedback,
     )
-    safe_sql, checks = validate_and_normalize_sql(generated_sql, max_rows=max_rows)
+    try:
+        safe_sql, checks = validate_and_normalize_sql(generated_sql, max_rows=max_rows)
+    except AppError as exc:
+        audit_log(
+            logger,
+            "sql_validation_failed",
+            trace_id=trace_id,
+            sql=generated_sql,
+            error_type=exc.error_type,
+            error_code=exc.code,
+        )
+        raise
     columns, rows, row_count = execute_select_sql(datasource, safe_sql)
     used_tables = extract_used_tables(safe_sql)
     data = {
@@ -209,6 +221,7 @@ def execute_query(request: QueryRequest, trace_id: str) -> dict:
             schema_context=schema_context,
             max_rows=request.options.max_rows,
             include_explanation=request.options.include_explanation,
+            trace_id=trace_id,
         )
     except AppError as exc:
         if exc.code == 2003:
@@ -238,6 +251,7 @@ def execute_query(request: QueryRequest, trace_id: str) -> dict:
                 max_rows=request.options.max_rows,
                 include_explanation=request.options.include_explanation,
                 error_feedback=exc.message,
+                trace_id=trace_id,
             )
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     result["elapsed_ms"] = elapsed_ms

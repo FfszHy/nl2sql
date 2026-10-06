@@ -18,8 +18,29 @@ type Message = {
   };
   echartsCode?: string;
   error?: string;
+  errorCode?: number;
+  httpStatus?: number;
   isLoading?: boolean;
 };
+
+class ApiRequestError extends Error {
+  readonly errorType: string;
+  readonly code?: number;
+  readonly httpStatus?: number;
+
+  constructor(
+    message: string,
+    errorType: string,
+    code?: number,
+    httpStatus?: number
+  ) {
+    super(message);
+    this.name = 'ApiRequestError';
+    this.errorType = errorType;
+    this.code = code;
+    this.httpStatus = httpStatus;
+  }
+}
 
 type RegisteredDataSource = {
   id: string;
@@ -240,17 +261,23 @@ function App() {
 
   const requestJson = async (path: string, init: RequestInit) => {
     const baseUrl = normalizeBaseUrl();
-    const response = await fetch(`${baseUrl}${path}`, init);
-    const rawText = await response.text();
+    let response: Response;
+    let rawText: string;
+    try {
+      response = await fetch(`${baseUrl}${path}`, init);
+      rawText = await response.text();
+    } catch {
+      throw new ApiRequestError('无法连接后端服务，请检查网络、服务地址和后端运行状态。', 'network_error');
+    }
     let data: any = null;
     if (rawText) {
       try {
         data = JSON.parse(rawText);
       } catch {
         if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${rawText.slice(0, 200)}`);
+          throw new ApiRequestError(`HTTP ${response.status}: ${rawText.slice(0, 200)}`, 'http_error', undefined, response.status);
         }
-        throw new Error('接口返回了非 JSON 内容，请检查后端服务地址或代理配置。');
+        throw new ApiRequestError('接口返回了非 JSON 内容，请检查后端服务地址或代理配置。', 'response_error', undefined, response.status);
       }
     }
 
@@ -258,12 +285,15 @@ function App() {
       const errorMessage =
         data?.message ||
         `HTTP ${response.status}${rawText ? `: ${rawText.slice(0, 200)}` : ''}`;
-      throw new Error(errorMessage);
+      throw new ApiRequestError(errorMessage, data?.error_type || 'http_error', data?.code, response.status);
     }
 
     if (!data) {
-      throw new Error(
-        '接口返回为空，通常是请求地址不对。请检查“后端服务地址”是否正确，或在开发环境中补齐 Vite 代理。'
+      throw new ApiRequestError(
+        '接口返回为空，通常是请求地址不对。请检查“后端服务地址”是否正确，或在开发环境中补齐 Vite 代理。',
+        'response_error',
+        undefined,
+        response.status
       );
     }
 
@@ -659,20 +689,25 @@ function App() {
           newMessages[lastIndex] = {
             role: 'assistant',
             content: data.message || '查询失败',
-            error: data.error_type,
+            error: data.error_type || 'query_error',
+            errorCode: data.code,
             isLoading: false
           };
         }
         return newMessages;
       });
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const requestError = error instanceof ApiRequestError ? error : null;
       updateActiveConversationMessages((prev) => {
         const newMessages = [...prev];
         if (!newMessages.length) return prev;
         newMessages[newMessages.length - 1] = {
           role: 'assistant',
-          content: '请求发生错误，请检查网络或后端服务。',
-          error: String(error),
+          content: errorMessage || '查询失败，请稍后重试。',
+          error: requestError?.errorType || 'request_error',
+          errorCode: requestError?.code,
+          httpStatus: requestError?.httpStatus,
           isLoading: false
         };
         return newMessages;
@@ -1160,12 +1195,18 @@ function App() {
                       </div>
                     ) : (
                       <div className="space-y-4 text-sm">
-                        <div className="whitespace-pre-wrap leading-relaxed">{msg.content}</div>
-                        
-                        {msg.error && (
-                          <div className="text-red-500 bg-red-50 p-3 rounded-md text-xs border border-red-100 font-mono">
-                            <strong>错误 ({msg.error}):</strong> {msg.content}
+                        {msg.error ? (
+                          <div role="alert" className="text-red-500 bg-red-50 p-3 rounded-md text-xs border border-red-100">
+                            <strong>查询失败</strong>
+                            <div className="whitespace-pre-wrap leading-relaxed mt-1">{msg.content}</div>
+                            <div className="font-mono mt-2 break-words">
+                              {msg.error}
+                              {typeof msg.errorCode === 'number' ? ` · 错误码 ${msg.errorCode}` : ''}
+                              {typeof msg.httpStatus === 'number' ? ` · HTTP ${msg.httpStatus}` : ''}
+                            </div>
                           </div>
+                        ) : (
+                          <div className="whitespace-pre-wrap leading-relaxed">{msg.content}</div>
                         )}
 
                         {msg.explanation && (

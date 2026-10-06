@@ -271,7 +271,8 @@ def generate_sql(
     system_prompt = (
         "你是 PostgreSQL NL2SQL 生成器。"
         "你只能输出单条 SELECT SQL。"
-        "禁止输出解释、禁止 markdown、禁止多语句。"
+        "可以使用只读 WITH/CTE 和窗口函数；主查询及每个 CTE 都必须是 SELECT 查询。"
+        "禁止输出写入语句、SQL 注释、解释、markdown 或多语句。"
         "必须优先使用问题命中的口语字段映射。"
         "可参考示例 SQL 的查询结构，但必须按当前 schema 与问题生成。"
         f"默认限制结果行数不超过 {max_rows}。"

@@ -29,5 +29,6 @@ htmlcov/
 .agents/
 *.log
 node_modules/
+*.tsbuildinfo
 
 # The supplied frontend/dist is intentionally included in this release.
