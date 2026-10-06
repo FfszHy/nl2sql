@@ -1,6 +1,6 @@
 # 智能问数 · macOS 运行说明
 
-本项目使用 FastAPI 后端和 React/Vite 网页界面，支持 PostgreSQL，通过浏览器使用。默认仅在本机运行；前端源码、依赖锁文件和构建配置已补齐，并在 Node.js 24 环境完成安装与构建验证。其他 Node.js 版本未在本次验证。详细功能和安全边界见 [README](README.md)。
+本项目使用 FastAPI 后端和 React/Vite 网页界面，支持 PostgreSQL，通过浏览器使用，默认仅在本机运行。以下使用 Python 3.11 和已验证的 Node.js 24。功能与快速开始见 [README](README.md)，数据保护与权限边界见 [数据与安全说明](docs/security.md)。
 
 ## 1. 创建 conda 环境
 
@@ -48,7 +48,7 @@ python -c 'import secrets; print(secrets.token_hex(32))'
 python scripts/create_nl2sql_postgres_mock_db.py --host YOUR_DATABASE_HOST --port 5432 --user YOUR_SETUP_USER --password 'YOUR_TEST_DATABASE_PASSWORD' --database YOUR_TEST_DATABASE --sslmode require
 ```
 
-初始化账号需要建表和写入权限，问数账号应仅授予必要业务表的读取权限。不要把管理员账号用于问数。`--recreate` 会级联删除同名表再重建；仅在可丢弃的测试库中使用。不要把真实密码粘贴到共享日志或 issue；命令参数也可能留在 shell 历史中。
+初始化账号需要建表和写入权限，问数账号应仅授予必要业务表的读取权限。不要把管理员账号用于问数。脚本默认保留已有表并继续插入数据，重复运行并非幂等初始化。`--recreate` 会级联删除同名表再重建；仅在可丢弃的测试库中使用。不要把真实密码粘贴到共享日志或 issue；命令参数也可能留在 shell 历史中。
 
 ```bash
 python scripts/create_nl2sql_postgres_mock_db.py --help
@@ -92,4 +92,4 @@ python3 -m http.server 5173 --bind 127.0.0.1 --directory frontend/dist
 - **模型或向量化失败**：核对 `.env` 中接口地址、凭据、模型名称和请求格式；注册成功不表示语义索引一定成功。
 - **SQL 被拒绝**：已支持只读 WITH/CTE；主查询和每个 CTE 都须为 SELECT 查询，仍拒绝写入、危险函数、系统库和 SQL 注释。网页会显示后端具体错误；终端中的 `sql_validation_failed` 包含候选 SQL 与 trace_id，可据此核对误拒原因，分享前先脱敏。
 
-本项目无 API 鉴权，当前密码持久化为可逆混淆。保持仅本机使用，不要将服务直接暴露到公网。问题、Schema 与部分查询结果会发送给配置的模型服务，详见 README 的数据流说明。
+本项目无 API 鉴权，当前密码持久化为可逆混淆。保持仅本机使用，不要将服务直接暴露到公网。问题、Schema 与部分查询结果会发送给配置的模型服务，详见 [数据与安全说明](docs/security.md)。
